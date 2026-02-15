@@ -231,14 +231,16 @@ def train(config: TrainConfig):
     logger.log_config(config)
     config.print()
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     if config.input_type == "continuous":
-        model = ContinuousInputModel(config.model)
+        model = ContinuousInputModel(config.model, device=device)
         train_dataloader, test_dataloader = prepare_continuous_data(
             config.data,
             embeddings=model.backbone.embeddings.word_embeddings.weight.detach(),
         )
     else:
-        model = LanguageModel(config.model)
+        model = LanguageModel(config.model, device=device)
         train_dataloader, test_dataloader = prepare_data(config.data)
 
     logger.log_model(model, config=config)
@@ -255,7 +257,7 @@ def train(config: TrainConfig):
         early_stopping_threshold=config.early_stopping_threshold,
         slice_keys=config.slice_keys,
         loss_type=config.loss_type,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device=device,
         logger=logger,
     )
     task.fit()

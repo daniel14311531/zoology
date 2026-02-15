@@ -216,7 +216,7 @@ class TransformerBlock(nn.Module):
 
 
 class LMBackbone(nn.Module):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, device='cuda'):
 
         super().__init__()
         self.embeddings = TokenEmbeddings(
@@ -224,7 +224,8 @@ class LMBackbone(nn.Module):
             config.vocab_size, 
             config.max_position_embeddings,
             learnable=config.learnable_word_embeddings,
-            init_type=config.embedding_init_type
+            init_type=config.embedding_init_type,
+            device=device,
         )
         if config.block_type == 'TransformerBlock':
             block_cls = TransformerBlock
@@ -295,14 +296,14 @@ class LanguageModel(nn.Module):
     """ 
     Language model that takes input ids and outputs vocabulary logits.
     """
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, device='cuda'):
         super().__init__()
         if config.vocab_size % config.pad_vocab_size_multiple != 0:
             config.vocab_size += config.pad_vocab_size_multiple - (
                 config.vocab_size % config.pad_vocab_size_multiple
             )
 
-        self.backbone = LMBackbone(config=config)
+        self.backbone = LMBackbone(config=config, device=device)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
@@ -313,7 +314,7 @@ class LanguageModel(nn.Module):
             self.lm_head.weight = self.backbone.embeddings.word_embeddings.weight
 
     def forward(
-        self, input_ids, position_ids=None, state=None, return_embeddings=True
+        self, input_ids, position_ids=None, state=None, return_embeddings=False
     ): 
         hidden_states = self.backbone(input_ids, position_ids=position_ids)
         if return_embeddings:
@@ -325,11 +326,11 @@ class LanguageModel(nn.Module):
 
 
 class ContinuousInputModel(nn.Module):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, device='cuda'):
         super().__init__()
         config = config.copy()
         self.input_proj = nn.Linear(config.d_model*2, config.d_model)
-        self.backbone = LMBackbone(config)
+        self.backbone = LMBackbone(config, device=device)
         self.output_proj = nn.Linear(config.d_model, config.d_model)  
     
     def forward(self, x):
