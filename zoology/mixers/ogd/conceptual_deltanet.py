@@ -16,6 +16,7 @@ class ConceptualDeltaNetLayer(nn.Module):
         use_qk_activation: bool = False,
         initial_state: bool = False,
         eta: float = 1.0,
+        decomposed_training: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -43,6 +44,65 @@ class ConceptualDeltaNetLayer(nn.Module):
             self.init_state = nn.Parameter(torch.zeros(1, num_heads, self.head_dim, self.head_dim))
         self.eta = eta
         self.use_qk_activation = use_qk_activation
+        self.decomposed_training = decomposed_training
+
+    def forward_deltanet(self, x):
+        # check NaNs in weights
+        # assert not torch.isnan(self.k_proj.weight).any(), "NaN detected in k_proj weights"
+        # assert not torch.isnan(self.q_proj.weight).any(), "NaN detected in q_proj weights"
+        # assert not torch.isnan(self.v_proj.weight).any(), "NaN detected in v_proj weights"
+        # assert not torch.isnan(self.beta_proj.weight).any(), "NaN detected in beta_proj weights"
+        # assert not torch.isnan(self.out_proj.weight).any(), "NaN detected in out_proj weights"
+        # assert not torch.isnan(self.k_conv1d.conv.weight).any(), "NaN detected in k_conv1d weights"
+        # assert not torch.isnan(self.q_conv1d.conv.weight).any(), "NaN detected in q_conv1d weights"
+        # assert not torch.isnan(self.v_conv1d.conv.weight).any(), "NaN detected in v_conv1d weights"
+        # assert not torch.isnan(self.out_norm.weight).any(), "NaN detected in out_norm weights"
+
+        # assert not torch.isnan(x).any(), "NaN detected in input x"
+
+        B, L, D = x.size()
+        k = self.k_conv1d(self.k_proj(x))
+        q = self.q_conv1d(self.q_proj(x))
+        v = self.v_conv1d(self.v_proj(x))
+        beta = torch.sigmoid(self.beta_proj(x))
+        if self.use_qk_activation:
+            k = F.silu(k)
+            q = F.silu(q)
+
+        k = k.view(B, L, self.n_head, self.head_dim)
+        q = q.view(B, L, self.n_head, self.head_dim)
+        v = v.view(B, L, self.n_head, self.head_dim)
+        beta = beta.view(B, L, self.n_head)
+        v = F.silu(v)
+
+        knorm = torch.norm(k, dim=-1, keepdim=True)  # (B, L, n_head, 1)
+        qnorm = torch.norm(q, dim=-1, keepdim=True)  # (B, L, n_head, 1)
+        k = k / (knorm + 1e-6)
+        v = v / (knorm + 1e-6)  # use k's norm for v to maintain scale
+        q = q / (qnorm + 1e-6)
+
+        if self.initial_state:
+            init_state = self.init_state.repeat(B, 1, 1, 1)
+        else:
+            init_state = torch.zeros(B, self.n_head, self.head_dim, self.head_dim, device=x.device, dtype=x.dtype)
+
+        o = delta_rule(
+            k = k,
+            q = q,
+            v = v,
+            beta = beta,
+            init_state = init_state
+        )
+
+        # assert not torch.isnan(o).any(), "NaN detected in delta_rule output"
+
+        o = self.out_norm(o)
+        o = o.contiguous().view(B, L, D)
+        o = self.out_proj(o)
+
+        # assert not torch.isnan(o).any(), "NaN detected in output o"
+
+        return o
 
     def forward(self, x):
         # check NaNs in weights
@@ -57,6 +117,9 @@ class ConceptualDeltaNetLayer(nn.Module):
         # assert not torch.isnan(self.out_norm.weight).any(), "NaN detected in out_norm weights"
 
         # assert not torch.isnan(x).any(), "NaN detected in input x"
+
+        if self.training and self.decomposed_training:
+            return self.forward_deltanet(x)
 
         B, L, D = x.size()
         k = self.k_conv1d(self.k_proj(x))
