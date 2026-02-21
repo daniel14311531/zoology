@@ -16,6 +16,7 @@ class OmdDeltaNetLayer(nn.Module):
         use_qk_activation: bool = False,
         initial_state: bool = False,
         eta: float = 1.0,
+        sync_kv_scale: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -43,6 +44,7 @@ class OmdDeltaNetLayer(nn.Module):
             self.init_state = nn.Parameter(torch.zeros(1, num_heads, self.head_dim, self.head_dim))
         self.eta = eta
         self.use_qk_activation = use_qk_activation
+        self.sync_kv_scale = sync_kv_scale
 
     def forward(self, x):
         B, L, D = x.size()
@@ -63,7 +65,8 @@ class OmdDeltaNetLayer(nn.Module):
         knorm = torch.norm(k, dim=-1, keepdim=True)  # (B, L, n_head, 1)
         qnorm = torch.norm(q, dim=-1, keepdim=True)  # (B, L, n_head, 1)
         k = k / (knorm + 1e-6)
-        v = v / (knorm + 1e-6)  # use k's norm for v to maintain scale
+        if self.sync_kv_scale:
+            v = v / (knorm + 1e-6)
         q = q / (qnorm + 1e-6)
 
         k = torch.concat([torch.zeros_like(k[:, :1, :, :]), k[:, :-1, :, :]], dim=1)
