@@ -178,3 +178,6 @@ cython_debug/
 *.csv
 *.pt
 .vscode/
+
+# Claude Code documentation
+CLAUDE.md
