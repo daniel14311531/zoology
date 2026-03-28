@@ -177,6 +177,9 @@ class Trainer:
 
             iterator.set_postfix(metrics)
             self.logger.log({"epoch": epoch_idx, **metrics})
+        
+        for key, value in metrics.items():
+            print(f"{key}: {value:.4f}")
         return metrics
 
     def fit(self):

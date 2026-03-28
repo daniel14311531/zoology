@@ -91,15 +91,15 @@ def add_model(models, model_name, conv_mixer, input_seq_len, model_factory_kwarg
         models.append(model)
     return models
 
-models = add_model(models, "attention", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"dropout": 0.1, "num_heads": 2})
+# models = add_model(models, "attention", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"dropout": 0.1, "num_heads": 2})
 
-for eta in [0.01, 0.1, 1.0]:
-    models = add_model(models, "deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": True})
-    models = add_model(models, "omd_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": True})
-    models = add_model(models, "conceptual_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": True})
-    models = add_model(models, "deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": False})
-    models = add_model(models, "omd_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": False})
-    models = add_model(models, "conceptual_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": False})
+for eta in [0.1]:
+    models = add_model(models, "deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": True, "sync_kv_scale": False})
+    models = add_model(models, "omd_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": True, "sync_kv_scale": False})
+    models = add_model(models, "conceptual_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": True, "sync_kv_scale": False})
+#     models = add_model(models, "deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": False})
+#     models = add_model(models, "omd_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": False})
+#     models = add_model(models, "conceptual_deltanet", conv_mixer, input_seq_len, model_factory_kwargs, model_kwargs={"eta": eta, "use_qk_activation": False})
 
 # 3. Finally we'll create a train config for each
 configs = []
