@@ -17,17 +17,21 @@ def calc_inv(T: torch.Tensor):
     Returns:
         Inverse of (I + T)^{-1}
     """
-    C = T.shape[-1]
-    I = torch.eye(C, device=T.device, dtype=T.dtype).unsqueeze(0).unsqueeze(0)
-    res = I
-    mu = -T
-    base = I
-    t = C
-    while t > 0:
-        res = mu @ res + res
-        mu = mu @ mu
-        t /= 2
-    return res
+    B, H, C, _ = T.size()
+    dtype = T.dtype
+    res = T + torch.eye(C, device=T.device, dtype=dtype).unsqueeze(0).unsqueeze(0)  # (B, H, C, C)
+    return torch.linalg.inv(res.float()).to(dtype)
+    # C = T.shape[-1]
+    # I = torch.eye(C, device=T.device, dtype=T.dtype).unsqueeze(0).unsqueeze(0)
+    # res = I
+    # mu = -T
+    # base = I
+    # t = C
+    # while t > 0:
+    #     res = mu @ res + res
+    #     mu = mu @ mu
+    #     t /= 2
+    # return res
 
 
 def o2b_delta_rule(
