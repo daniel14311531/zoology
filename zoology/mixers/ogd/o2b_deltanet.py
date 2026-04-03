@@ -3,8 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .shortconvolution import ShortConv
 from .norm import RMSNorm
+from .rotary import RotaryEmbedding
+from typing import Literal
 
 CHUNK_SIZE = 64
+
+O2B_state = tuple[torch.Tensor, torch.Tensor, torch.long]
 
 
 def calc_inv(T: torch.Tensor):
@@ -21,6 +25,7 @@ def calc_inv(T: torch.Tensor):
     dtype = T.dtype
     res = T + torch.eye(C, device=T.device, dtype=dtype).unsqueeze(0).unsqueeze(0)  # (B, H, C, C)
     return torch.linalg.inv(res.float()).to(dtype)
+    # Alternative implementation using exponentiation by squaring:
     # C = T.shape[-1]
     # I = torch.eye(C, device=T.device, dtype=T.dtype).unsqueeze(0).unsqueeze(0)
     # res = I
@@ -39,7 +44,7 @@ def o2b_delta_rule(
     q: torch.Tensor,
     v: torch.Tensor,
     b: torch.Tensor,
-    init_state: tuple,
+    init_state: O2B_state,
 ):
     """
     Chunkwise parallel version of online-to-batch delta rule.
@@ -86,8 +91,8 @@ def o2b_delta_rule(
 
         # U[i] = (I + tril(B[i]K[i]^T, -1))^{-1} (V[i] - B[i]W[i-1])
         # Matrix inversion MUST use float32 for numerical stability
-        T_mat = torch.tril(B_i @ K_i.transpose(-2, -1), diagonal=-1)
-        inv = calc_inv(T_mat)
+        T = torch.tril(B_i @ K_i.transpose(-2, -1), diagonal=-1)
+        inv = calc_inv(T)
         U_i = inv @ (V_i - B_i @ W_t)
 
         # W[i] = W[i-1] + K[i]^T U[i]
@@ -147,6 +152,8 @@ class O2BDeltaNetLayer(nn.Module):
         use_qk_activation: bool = False,
         eta: float = 1.0,
         sync_kv_scale: bool = False,
+        use_rope: bool = False,
+        ogd_mode: Literal["deltanet", "ogd", "conceptual"] = "deltanet",
         **kwargs
     ):
         super().__init__()
@@ -172,6 +179,11 @@ class O2BDeltaNetLayer(nn.Module):
         self.eta = eta
         self.use_qk_activation = use_qk_activation
         self.sync_kv_scale = sync_kv_scale
+        self.use_rope = use_rope
+        self.ogd_mode = ogd_mode
+
+        if self.use_rope:
+            self.rotary = RotaryEmbedding(dim=self.head_dim)
 
     def forward(self, x):
         B, L, D = x.size()
@@ -189,6 +201,15 @@ class O2BDeltaNetLayer(nn.Module):
         beta = beta.view(B, L, self.n_head)
         v = F.silu(v)
 
+        # Apply RoPE before normalization
+        if self.use_rope:
+            k = k.transpose(1, 2)  # (B, H, L, D)
+            q = q.transpose(1, 2)  # (B, H, L, D)
+            k = self.rotary(k, offset=0, seq_len=L)
+            q = self.rotary(q, offset=0, seq_len=L)
+            k = k.transpose(1, 2)  # (B, L, H, D)
+            q = q.transpose(1, 2)  # (B, L, H, D)
+
         knorm = torch.norm(k, dim=-1, keepdim=True)  # (B, L, n_head, 1)
         qnorm = torch.norm(q, dim=-1, keepdim=True)  # (B, L, n_head, 1)
         k = k / (knorm + 1e-6)
@@ -203,7 +224,14 @@ class O2BDeltaNetLayer(nn.Module):
             torch.tensor(0, dtype=torch.long, device=x.device),
         )
 
-        b = self.eta * beta.view(B, L, self.n_head, 1) * k
+        if self.ogd_mode == "deltanet":
+            eta = self.eta * beta
+        else:
+            k_norm2 = torch.sum(k ** 2, dim=-1)  # (B, L, n_head)
+            eta = self.eta * beta / (1 + self.eta * beta * k_norm2)
+        
+        b = eta * k
+        v = eta * v
 
         o, _ = o2b_delta_rule(
             k=k,
