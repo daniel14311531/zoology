@@ -67,7 +67,7 @@ def add_model(models, model_name, conv_mixer, input_seq_len, model_factory_kwarg
     if model_kwargs is None:
         model_kwargs = {}
 
-    for d_model in [64, 128, 256]:
+    for d_model in [64]:
         seq_mixer = dict(
             name=MIXERS[model_name],
             kwargs={**model_kwargs}
@@ -93,14 +93,28 @@ def add_model(models, model_name, conv_mixer, input_seq_len, model_factory_kwarg
 # Add models with different configurations
 for eta in [0.01, 0.1, 1]:
     # O2B DeltaNet default
-    models = add_model(models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
-                       model_kwargs={"eta": eta, "use_qk_activation": True, "sync_kv_scale": False})
-    # O2B DeltaNet with sync_kv_scale
-    models = add_model(models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
-                       model_kwargs={"eta": eta, "use_qk_activation": True, "sync_kv_scale": True})
-    # O2B DeltaNet without qk_activation
-    models = add_model(models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
-                       model_kwargs={"eta": eta, "use_qk_activation": False, "sync_kv_scale": False})
+    models = add_model(
+        models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
+        model_kwargs={
+            "eta": eta,
+            "use_qk_activation": True,
+            "sync_kv_scale": False,
+            "ogd_mode": "deltanet",
+            "use_RoPE": False,
+        }
+    )
+
+    # use RoPE
+    models = add_model(
+        models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
+        model_kwargs={
+            "eta": eta,
+            "use_qk_activation": True,
+            "sync_kv_scale": False,
+            "ogd_mode": "deltanet",
+            "use_RoPE": False,
+        }
+    )
 
 # 3. Create train configs
 configs = []
