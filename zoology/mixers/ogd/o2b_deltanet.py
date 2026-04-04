@@ -230,8 +230,8 @@ class O2BDeltaNetLayer(nn.Module):
             k_norm2 = torch.sum(k ** 2, dim=-1)  # (B, L, n_head)
             eta = self.eta * beta / (1 + self.eta * beta * k_norm2)
         
-        b = eta * k
-        v = eta * v
+        b = eta.contiguous().view(B, L, self.n_head, 1) * k
+        v = eta.contiguous().view(B, L, self.n_head, 1) * v
 
         o, _ = o2b_delta_rule(
             k=k,

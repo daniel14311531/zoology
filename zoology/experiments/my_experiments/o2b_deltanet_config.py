@@ -100,7 +100,7 @@ for eta in [0.01, 0.1, 1]:
             "use_qk_activation": True,
             "sync_kv_scale": False,
             "ogd_mode": "deltanet",
-            "use_RoPE": False,
+            "use_rope": False,
         }
     )
 
@@ -112,7 +112,7 @@ for eta in [0.01, 0.1, 1]:
             "use_qk_activation": True,
             "sync_kv_scale": False,
             "ogd_mode": "deltanet",
-            "use_RoPE": False,
+            "use_rope": True,
         }
     )
 
