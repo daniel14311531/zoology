@@ -8,10 +8,15 @@ import torch.nn as nn
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
-    """Rotate last-dim tensor halves for RoPE."""
+    """
+    Rotate last-dim tensor halves for RoPE.
+
+    For input [x0, x1, x2, x3, ...], returns [-x1, x0, -x3, x2, ...]
+    to enable 2D rotation: (x0, x1) -> (x0*cos - x1*sin, x0*sin + x1*cos)
+    """
     x1 = x[..., ::2]
     x2 = x[..., 1::2]
-    return torch.cat((-x2, x1), dim=-1)
+    return torch.stack([-x2, x1], dim=-1).flatten(-2)
 
 
 def apply_rotary_pos_emb(
