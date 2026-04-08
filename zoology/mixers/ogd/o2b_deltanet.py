@@ -5,6 +5,7 @@ from .shortconvolution import ShortConv
 from .norm import RMSNorm
 from .rotary import RotaryEmbedding
 from typing import Literal
+from .delta_rule import delta_rule
 
 CHUNK_SIZE = 64
 
@@ -223,6 +224,7 @@ class O2BDeltaNetLayer(nn.Module):
             torch.zeros(B, self.n_head, self.head_dim, self.head_dim, device=x.device, dtype=torch.float32),
             torch.tensor(0, dtype=torch.long, device=x.device),
         )
+        # init_state = torch.zeros(B, self.n_head, self.head_dim, self.head_dim, device=x.device, dtype=torch.float32)
 
         if self.ogd_mode == "deltanet":
             eta = self.eta * beta
@@ -240,6 +242,13 @@ class O2BDeltaNetLayer(nn.Module):
             b=b,
             init_state=init_state
         )
+        # o, _ = delta_rule(
+        #     k=k,
+        #     q=q,
+        #     v=v,
+        #     beta=eta,
+        #     init_state=init_state
+        # )
 
         o = self.out_norm(o)
         o = o.contiguous().view(B, L, D)

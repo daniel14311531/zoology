@@ -21,6 +21,40 @@ GLAState = torch.Tensor
 CHUNK_SIZE = 64
 
 
+class RMSNorm(nn.Module):
+    """RMSNorm implementation."""
+
+    def __init__(self, n_embd, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(n_embd))
+        self.eps = eps
+
+    def forward(self, x):
+        norm_x = torch.rsqrt(torch.mean(x * x, dim=-1, keepdim=True) + self.eps)
+        return x * norm_x * self.weight
+
+
+class ShortConv(nn.Module):
+    def __init__(self, kernel_size: int, n_embd: int):
+        super().__init__()
+        self.conv = nn.Conv1d(
+            in_channels=n_embd,
+            out_channels=n_embd,
+            kernel_size=kernel_size,
+            padding=kernel_size - 1,
+            groups=n_embd,
+            bias=False,
+        )
+        self.n_embd = n_embd
+
+    def forward(self, x):
+        # x: (B, T, C)
+        x = x.transpose(1, 2)  # (B, C, T)
+        x = self.conv(x)[..., :x.size(2)]  # (B, C, T)
+        x = x.transpose(1, 2)  # (B, T, C)
+        return x
+
+
 def gla_recurrent(
     k: torch.Tensor,
     q: torch.Tensor,
@@ -137,7 +171,7 @@ def gla_chunkwise_parallel(
 
         # o_t = q_t^T @ diag(prod_alpha_i[1:t]) @ S_prev + \sum_{s=1}^t diag(prod_alpha_i[s+1:t]) @ k_s @ v_s^T
         weight_i = torch.tril(Q_i @ ((end_cumsum_alpha - cumsum_alpha).exp() * K_i).transpose(-1, -2))  # (B, H, C, C)
-        O_i = (Q_i * (end_cumsum_alpha - cumsum_alpha + alpha).exp()) @ S_prev + weight_i @ V_i  # (B, H, C, D_v)
+        O_i = (Q_i * (end_cumsum_alpha - cumsum_alpha + alpha_i).exp()) @ S_prev + weight_i @ V_i  # (B, H, C, D_v)
         outputs.append(O_i.to(output_dtype).transpose(1, 2))
 
         # S_new = diag(prod_alpha_i[1:t]) @ S_prev + (prod_alpha_i * K_i)^T @ V_i
@@ -175,6 +209,7 @@ class GLANaive(nn.Module):
         self,
         d_model: int,
         num_heads: int = 4,
+        conv_size: int = 4,
         feature_dim: Optional[int] = None,
         chunk_size: int = 64,
         gate_low_rank: int = 32,
@@ -199,11 +234,17 @@ class GLANaive(nn.Module):
         # Gate projection (low-rank parameterization)
         self.gate_proj = nn.Sequential(
             nn.Linear(d_model, gate_low_rank, bias=False),
-            nn.Linear(gate_low_rank, self.head_dim, bias=True)
+            nn.Linear(gate_low_rank, self.num_heads * self.head_dim, bias=True)
         )
 
         # Output projection
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        self.out_norm = RMSNorm(self.head_dim, eps=1e-6)
+        
+        # Short Convolution
+        self.k_conv1d = ShortConv(conv_size, d_model)
+        self.q_conv1d = ShortConv(conv_size, d_model)
+        self.v_conv1d = ShortConv(conv_size, d_model)
 
         # Configuration
         self.chunk_size = chunk_size
@@ -223,9 +264,9 @@ class GLANaive(nn.Module):
         B, L, D = hidden_states.size()
 
         # Project to key, query, value
-        k = self.k_proj(hidden_states)  # (B, L, H * D_k)
-        q = self.q_proj(hidden_states)  # (B, L, H * D_k)
-        v = self.v_proj(hidden_states)  # (B, L, H * D)
+        k = self.k_conv1d(self.k_proj(hidden_states))
+        q = self.q_conv1d(self.q_proj(hidden_states))
+        v = self.v_conv1d(self.v_proj(hidden_states))
 
         # Compute gate (use logsigmoid for numerical stability, alpha in (-inf, 0))
         gate = self.gate_proj(hidden_states)  # (B, L, H * D_k)
@@ -247,10 +288,8 @@ class GLANaive(nn.Module):
             k, q, v, alpha, init_state, chunk_size=self.chunk_size
         )
 
-        # Reshape output: (B, L, H, D_v) -> (B, L, D)
+        o = self.out_norm(o)
         o = o.contiguous().view(B, L, D)
-
-        # Output projection
         o = self.out_proj(o)
 
         return o
