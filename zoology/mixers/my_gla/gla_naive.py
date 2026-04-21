@@ -32,7 +32,7 @@ class RMSNorm(nn.Module):
     def forward(self, x):
         norm_x = torch.rsqrt(torch.mean(x * x, dim=-1, keepdim=True) + self.eps)
         return x * norm_x * self.weight
-
+    
 
 class ShortConv(nn.Module):
     def __init__(self, kernel_size: int, n_embd: int):
@@ -53,68 +53,6 @@ class ShortConv(nn.Module):
         x = self.conv(x)[..., :x.size(2)]  # (B, C, T)
         x = x.transpose(1, 2)  # (B, T, C)
         return x
-
-
-def gla_recurrent(
-    k: torch.Tensor,
-    q: torch.Tensor,
-    v: torch.Tensor,
-    alpha: torch.Tensor,
-    init_state: GLAState,
-    flag: bool = False,
-) -> Tuple[torch.Tensor, GLAState]:
-    """
-    Recurrent (sequential) implementation of GLA for inference.
-
-    Args:
-        k: Key tensor of shape (B, L, H, D_k)
-        q: Query tensor of shape (B, L, H, D_k)
-        v: Value tensor of shape (B, L, H, D_v)
-        alpha: Gate tensor of shape (B, L, H, D_k), values in (-inf, 0)
-        init_state: S_prev of shape (B, H, D_k, D_v)
-        flag: If True, alpha is used directly; if False, exp(alpha) is used
-
-    Returns:
-        o: Output tensor of shape (B, L, H, D_v)
-        new_state: S_new of shape (B, H, D_k, D_v)
-    """
-    assert alpha.max() <= 0, f"alpha values should be in (-inf, 0), but found {alpha.max()}"
-    B, L, H, D_k = k.shape
-    D_v = v.shape[-1]
-    device = k.device
-    dtype = k.dtype
-
-    S_prev = init_state
-    if S_prev is None:
-        S_prev = torch.zeros(B, H, D_k, D_v, device=device, dtype=torch.float32)
-
-    S_prev = S_prev.float()
-
-    output_dtype = dtype
-    outputs = []
-
-    for t in range(L):
-        k_t = k[:, t:t+1, :, :].transpose(1, 2).float()  # (B, H, 1, D_k)
-        q_t = q[:, t:t+1, :, :].transpose(1, 2).float()  # (B, H, 1, D_k)
-        v_t = v[:, t:t+1, :, :].transpose(1, 2).float()  # (B, H, 1, D_v)
-        alpha_t = alpha[:, t:t+1, :, :].transpose(1, 2).float()  # (B, H, 1, D_k)
-
-        # S_t = Diag(alpha_t) S_{t-1} + k_t^T v_t
-        if flag == False:
-            S_t = alpha_t.transpose(-2, -1).exp() * S_prev + k_t.transpose(-2, -1) @ v_t  # (B, H, D_k, D_v)
-        else:
-            S_t = alpha_t.transpose(-2, -1) * S_prev + k_t.transpose(-2, -1) @ v_t  # (B, H, D_k, D_v)
-
-        # o_t = q_t S_t
-        o_t = q_t @ S_t
-        outputs.append(o_t.to(output_dtype).transpose(1, 2))
-
-        S_prev = S_t
-
-    o = torch.cat(outputs, dim=1)
-    new_state = S_prev
-
-    return o, new_state
 
 
 def gla_chunkwise_parallel(
@@ -140,7 +78,11 @@ def gla_chunkwise_parallel(
         o: Output tensor of shape (B, L, H, D_v)
         new_state: S_new of shape (B, H, D_k, D_v)
     """
-    assert alpha.max() <= 0, f"alpha values should be in (-inf, 0), but found {alpha.max()}"
+    assert (not torch.isnan(k).any())
+    assert (not torch.isnan(q).any())
+    assert (not torch.isnan(v).any())
+    assert (not torch.isnan(alpha).any())
+    
     B, L, H, D_k = k.shape
     D_v = v.shape[-1]
     num_chunks = (L + chunk_size - 1) // chunk_size
@@ -170,17 +112,22 @@ def gla_chunkwise_parallel(
         end_cumsum_alpha = cumsum_alpha[:, :, -1, :].contiguous().view(B, H, 1, D_k)  # (B, H, 1, D_k)
 
         # o_t = q_t^T @ diag(prod_alpha_i[1:t]) @ S_prev + \sum_{s=1}^t diag(prod_alpha_i[s+1:t]) @ k_s @ v_s^T
-        weight_i = torch.tril(Q_i @ ((end_cumsum_alpha - cumsum_alpha).exp() * K_i).transpose(-1, -2))  # (B, H, C, C)
-        O_i = (Q_i * (end_cumsum_alpha - cumsum_alpha + alpha_i).exp()) @ S_prev + weight_i @ V_i  # (B, H, C, D_v)
+        weight_i = torch.tril(
+            (cumsum_alpha.exp() * Q_i) @ \
+            ((-cumsum_alpha).exp() * K_i).transpose(-1, -2)
+        )  # (B, H, C, C)
+        O_i = (Q_i * cumsum_alpha.exp()) @ S_prev + weight_i @ V_i  # (B, H, C, D_v)
         outputs.append(O_i.to(output_dtype).transpose(1, 2))
 
         # S_new = diag(prod_alpha_i[1:t]) @ S_prev + (prod_alpha_i * K_i)^T @ V_i
-        S_new = end_cumsum_alpha.transpose(-1, -2) * S_prev + ((end_cumsum_alpha - cumsum_alpha).exp() * K_i).transpose(-1, -2) @ V_i
+        S_new = end_cumsum_alpha.exp().transpose(-1, -2) * S_prev + ((end_cumsum_alpha - cumsum_alpha).exp() * K_i).transpose(-1, -2) @ V_i
 
         S_prev = S_new
 
     o = torch.cat(outputs, dim=1)
     new_state = S_prev
+    
+    assert (not torch.isnan(o).any())
 
     return o, new_state
 
@@ -208,12 +155,12 @@ class GLANaive(nn.Module):
     def __init__(
         self,
         d_model: int,
-        num_heads: int = 4,
-        conv_size: int = 4,
+        num_heads: int = 1,
         feature_dim: Optional[int] = None,
         chunk_size: int = 64,
-        gate_low_rank: int = 32,
-        gate_logit_normalizer: float = 1.0,
+        conv_size: int = 4,
+        gate_low_rank: int = 16,
+        gate_logit_normalizer: float = 16.0,
         layer_idx: Optional[int] = None,
     ):
         super().__init__()
@@ -230,21 +177,21 @@ class GLANaive(nn.Module):
         self.k_proj = nn.Linear(d_model, num_heads * self.feature_dim, bias=False)
         self.q_proj = nn.Linear(d_model, num_heads * self.feature_dim, bias=False)
         self.v_proj = nn.Linear(d_model, num_heads * self.head_dim, bias=False)
+        self.beta_proj = nn.Linear(d_model, num_heads, bias=False)
+        
+        self.k_conv1d = ShortConv(conv_size, d_model)
+        self.q_conv1d = ShortConv(conv_size, d_model)
+        self.v_conv1d = ShortConv(conv_size, d_model)
 
         # Gate projection (low-rank parameterization)
         self.gate_proj = nn.Sequential(
             nn.Linear(d_model, gate_low_rank, bias=False),
-            nn.Linear(gate_low_rank, self.num_heads * self.head_dim, bias=True)
+            nn.Linear(gate_low_rank, self.head_dim, bias=True)
         )
 
         # Output projection
+        self.out_norm = RMSNorm(self.head_dim)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
-        self.out_norm = RMSNorm(self.head_dim, eps=1e-6)
-        
-        # Short Convolution
-        self.k_conv1d = ShortConv(conv_size, d_model)
-        self.q_conv1d = ShortConv(conv_size, d_model)
-        self.v_conv1d = ShortConv(conv_size, d_model)
 
         # Configuration
         self.chunk_size = chunk_size
@@ -267,29 +214,43 @@ class GLANaive(nn.Module):
         k = self.k_conv1d(self.k_proj(hidden_states))
         q = self.q_conv1d(self.q_proj(hidden_states))
         v = self.v_conv1d(self.v_proj(hidden_states))
+        
+        beta = F.sigmoid(self.beta_proj(hidden_states))  # (B, L, H)
+        k, q = F.silu(k), F.silu(q)
+        v = F.silu(v)
 
         # Compute gate (use logsigmoid for numerical stability, alpha in (-inf, 0))
         gate = self.gate_proj(hidden_states)  # (B, L, H * D_k)
         gate = F.logsigmoid(gate) / self.gate_logit_normalizer
+#         gate = torch.zeros_like(gate)
 
         # Reshape to (B, L, H, D_k)
-        k = k.view(B, L, self.num_heads, self.feature_dim)
-        q = q.view(B, L, self.num_heads, self.feature_dim)
-        alpha = gate.view(B, L, self.num_heads, self.feature_dim)
+        k = k.contiguous().view(B, L, self.num_heads, self.feature_dim)
+        q = q.contiguous().view(B, L, self.num_heads, self.feature_dim)
+        alpha = gate.contiguous().view(B, L, self.num_heads, self.feature_dim)
 
         # Reshape value to (B, L, H, D_v)
-        v = v.view(B, L, self.num_heads, self.head_dim)
+        v = v.contiguous().view(B, L, self.num_heads, self.head_dim)
 
         # Initialize state as None (no caching for training)
         init_state = None
+
+        knorm = torch.norm(k, dim=-1, keepdim=True)  # (B, L, n_head, 1)
+        qnorm = torch.norm(q, dim=-1, keepdim=True)  # (B, L, n_head, 1)
+        k = k / (knorm + 1e-5)
+        q = q / (qnorm + 1e-5)
+#         k = k * beta.unsqueeze(-1)
 
         # Chunkwise parallel mode for training
         o, _ = gla_chunkwise_parallel(
             k, q, v, alpha, init_state, chunk_size=self.chunk_size
         )
-
+        
+        # Reshape output: (B, L, H, D_v) -> (B, L, D)
         o = self.out_norm(o)
         o = o.contiguous().view(B, L, D)
+
+        # Output projection
         o = self.out_proj(o)
 
         return o
