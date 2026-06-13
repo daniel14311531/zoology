@@ -115,7 +115,7 @@ class GatedDeltaNet(nn.Module):
         head_dim = self.head_dim
 
         self.key_dim = self.num_heads * self.head_dim
-        self.value_dim = self.key_dim * self.expand_v
+        self.value_dim = int(self.key_dim * self.expand_v)
         self.head_k_dim = head_dim
         self.head_v_dim = head_dim * self.expand_v
         self.layer_idx = layer_idx
