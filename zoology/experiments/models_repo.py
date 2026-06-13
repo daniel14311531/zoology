@@ -358,7 +358,7 @@ def add_deepseek_nsa(models, conv_mixer, input_seq_len, model_factory_kwargs, nu
 def add_ttt(models, conv_mixer, input_seq_len, model_factory_kwargs, num_layers=2):
     block_type = "TransformerBlock"
     for d_model in [64, 128, 256]:
-        for ttt_type in ["mlp", "linear"]:  
+        for ttt_type in ["mlp", "linear"]:
             for mini_batch_size in [16, 32]:
                 ttt_mixer = dict(
                     name="zoology.mixers.ttt.TTT",
@@ -388,6 +388,97 @@ def add_ttt(models, conv_mixer, input_seq_len, model_factory_kwargs, num_layers=
                     **model_factory_kwargs
                 )
                 models.append(model)
+    return models
+
+
+# KDA (Kimi Delta Attention)
+def add_kda(models, conv_mixer, input_seq_len, model_factory_kwargs, num_layers=2):
+    block_type = "TransformerBlock"
+    for d_model in [64, 128, 256]:
+        kda_mixer = dict(
+            name="zoology.mixers.kda.KimiDeltaAttention",
+            kwargs={
+                "num_heads": 2,          # Tune
+                "expand_v": 1.0,         # Tune
+                "use_short_conv": True,  # Tune
+                "conv_size": 4,
+            }
+        )
+        mixers = [conv_mixer, kda_mixer] if conv_mixer is not None else [kda_mixer]
+        mixer = ModuleConfig(
+            name="zoology.mixers.hybrid.Hybrid",
+            kwargs={"configs": mixers}
+        )
+        model = ModelConfig(
+            block_type=block_type,
+            d_model=d_model,
+            n_layers=num_layers,
+            sequence_mixer=mixer,
+            max_position_embeddings=0,
+            name="kda",
+            **model_factory_kwargs
+        )
+        models.append(model)
+    return models
+
+
+# MesaNet
+def add_mesa_net(models, conv_mixer, input_seq_len, model_factory_kwargs, num_layers=2):
+    block_type = "TransformerBlock"
+    for d_model in [64, 128, 256]:
+        mesa_mixer = dict(
+            name="zoology.mixers.mesa_net.MesaNet",
+            kwargs={
+                "num_heads": 2,            # Tune
+                "use_output_gate": False,  # Tune
+                "conv_size": 4,
+            }
+        )
+        mixers = [conv_mixer, mesa_mixer] if conv_mixer is not None else [mesa_mixer]
+        mixer = ModuleConfig(
+            name="zoology.mixers.hybrid.Hybrid",
+            kwargs={"configs": mixers}
+        )
+        model = ModelConfig(
+            block_type=block_type,
+            d_model=d_model,
+            n_layers=num_layers,
+            sequence_mixer=mixer,
+            max_position_embeddings=0,
+            name="mesa_net",
+            **model_factory_kwargs
+        )
+        models.append(model)
+    return models
+
+
+# MesaNetDIY
+def add_mesa_net_diy(models, conv_mixer, input_seq_len, model_factory_kwargs, num_layers=2):
+    block_type = "TransformerBlock"
+    for d_model in [64, 128, 256]:
+        mesa_diy_mixer = dict(
+            name="zoology.mixers.mesa_net_diy.MesaNetDIY",
+            kwargs={
+                "num_heads": 2,            # Tune
+                "use_output_gate": False,  # Tune
+                "conv_size": 4,
+            }
+        )
+        mixers = [conv_mixer, mesa_diy_mixer] if conv_mixer is not None else [mesa_diy_mixer]
+        mixer = ModuleConfig(
+            name="zoology.mixers.hybrid.Hybrid",
+            kwargs={"configs": mixers}
+        )
+        model = ModelConfig(
+            block_type=block_type,
+            d_model=d_model,
+            n_layers=num_layers,
+            sequence_mixer=mixer,
+            max_position_embeddings=0,
+            name="mesa_net_diy",
+            **model_factory_kwargs
+        )
+        models.append(model)
     return models
 
 

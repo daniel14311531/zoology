@@ -18,6 +18,8 @@ from zoology.model import LanguageModel, ContinuousInputModel
 from zoology.logger import WandbLogger
 from zoology.utils import set_determinism
 from zoology.metrics import compute_mse, compute_ce_with_embeddings
+import json
+from pathlib import Path
 
 
 class Trainer:
@@ -205,6 +207,11 @@ class Trainer:
                 break
 
             self.scheduler.step()
+        
+        for k, v in metrics.items():
+            print(f">>> {k}: {v:.4f}")
+        
+        return metrics
 
 
 def compute_metrics(
@@ -258,8 +265,20 @@ def train(config: TrainConfig):
         device="cuda" if torch.cuda.is_available() else "cpu",
         logger=logger,
     )
-    task.fit()
+    metrics = task.fit()
     logger.finish()
+    # Export combined metrics and config as JSON named by config.run_id
+    output_dir = Path("outputs")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    run_id = getattr(config, "run_id", None) or datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = output_dir / f"{run_id}.json"
+
+    combined = {"config": config.model_dump(), "metrics": metrics}
+    with open(out_path, "w") as f:
+        json.dump(combined, f, indent=2)
+
+    print(f"Combined metrics and config saved to {out_path}")
 
 
 if __name__ == "__main__":

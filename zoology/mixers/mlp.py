@@ -48,3 +48,24 @@ class GLU(nn.Module):
         x = self.fc1(x) * self.activation(self.fc2(x))
         y = self.fc3(x)
         return y if not self.return_residual else (y, x)
+
+
+class SwiGLU(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        hidden_mult: int=4,
+        return_residual: bool=False,
+        **kwargs
+    ):
+        super().__init__()
+        in_features, out_features = d_model, d_model
+        hidden_features = d_model * hidden_mult
+        self.return_residual = return_residual
+        self.w1 = nn.Linear(in_features, hidden_features, bias=False)
+        self.w2 = nn.Linear(in_features, hidden_features, bias=False)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=False)
+
+    def forward(self, x):
+        y = self.w3(F.silu(self.w1(x)) * self.w2(x))
+        return y if not self.return_residual else (y, x)
