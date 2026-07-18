@@ -62,6 +62,7 @@ def ls_chunk_parallel(
     # state_KK[j] = state_KK * exp(cumsum_G[j]) + KTK_cum[j]
     exp_cumsum = cumsum_G.exp()
     state_KK_all = state_KK.unsqueeze(2) * exp_cumsum.unsqueeze(-1).unsqueeze(-1) + KTK_cum
+    state_KK_all = state_KK_all + torch.eye(D, device=state_KK_all.device, dtype=state_KK_all.dtype).view(1, 1, D, D)
     state_KV_all = state_KV.unsqueeze(2) * exp_cumsum.unsqueeze(-1).unsqueeze(-1) + KTV_cum
 
     # Solve for each position j: state_KK_all[j] @ q_star_j = Q[j]
@@ -112,7 +113,6 @@ def least_square_parallel(
     B, L, H, D = k.shape
     if state_KK is None:
         state_KK = torch.zeros(B, H, D, D, device=k.device, dtype=torch.float32)
-        state_KK = state_KK + torch.eye(D, device=k.device, dtype=torch.float32).view(1, 1, D, D)
     if state_KV is None:
         state_KV = torch.zeros(B, H, D, D, device=k.device, dtype=torch.float32)
     output = []
@@ -151,6 +151,7 @@ class LeastSquareLayer(nn.Module):
         use_qk_activation: bool = True,
         eta: float = 1.0,
         sync_kv_scale: bool = False,
+        **kwargs,
     ):
         super().__init__()
         assert d_model % num_heads == 0

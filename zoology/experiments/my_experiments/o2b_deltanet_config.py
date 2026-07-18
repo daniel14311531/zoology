@@ -58,6 +58,8 @@ MIXERS = {
     "attention": "zoology.mixers.attention.MHA",
     "deltanet": "zoology.mixers.ogd.deltanet.DeltaNetLayer",
     "o2b_deltanet": "zoology.mixers.ogd.o2b_deltanet.O2BDeltaNetLayer",
+    "o2b_weighted_deltanet": "zoology.mixers.ogd.o2b_weighted_deltanet.O2BWeightedDeltaNetLayer",
+    "discounted_o2b_decayed_deltanet": "zoology.mixers.ogd.discounted_o2b_decayed_deltanet.DiscountedO2BDecayedDeltaNetLayer",
 }
 
 
@@ -94,7 +96,7 @@ def add_model(models, model_name, conv_mixer, input_seq_len, model_factory_kwarg
 for eta in [0.01, 0.1, 1]:
     # O2B DeltaNet default
     models = add_model(
-        models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
+        models, "discounted_o2b_decayed_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
         model_kwargs={
             "eta": eta,
             "use_qk_activation": True,
@@ -105,16 +107,16 @@ for eta in [0.01, 0.1, 1]:
     )
 
     # use RoPE
-    models = add_model(
-        models, "o2b_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
-        model_kwargs={
-            "eta": eta,
-            "use_qk_activation": True,
-            "sync_kv_scale": False,
-            "ogd_mode": "deltanet",
-            "use_rope": True,
-        }
-    )
+    # models = add_model(
+    #     models, "discounted_o2b_decayed_deltanet", conv_mixer, input_seq_len, model_factory_kwargs,
+    #     model_kwargs={
+    #         "eta": eta,
+    #         "use_qk_activation": True,
+    #         "sync_kv_scale": False,
+    #         "ogd_mode": "deltanet",
+    #         "use_rope": True,
+    #     }
+    # )
 
 # 3. Create train configs
 configs = []
